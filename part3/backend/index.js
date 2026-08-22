@@ -1,6 +1,14 @@
+require("dotenv").config();
 const express = require("express");
-const cors = require("cors");
+const Note = require("./models/note");
+
 const app = express();
+
+// const password = process.argv[2];
+// const url = `mongodb+srv://rehan:${password}@cluster0.1tfts.mongodb.net/noteApp?appName=Cluster0`;
+
+// mongoose.set("strictQuery", false);
+// mongoose.connect(url, { family: 4 });
 
 const requestLogger = (request, response, next) => {
   console.log("Method:", request.method);
@@ -10,15 +18,25 @@ const requestLogger = (request, response, next) => {
   next();
 };
 
-const unknownEndpoint = (request, response) => {
-  response.status(404).send({ error: "unknown endpoint" });
-};
-
+app.use(express.static("dist"));
 // Access data, json-parser
-app.use(cors());
 app.use(express.json());
 app.use(requestLogger);
-app.use(express.static("dist"));
+
+// const noteSchema = new mongoose.Schema({
+//   content: String,
+//   important: Boolean,
+// });
+
+// noteSchema.set("toJSON", {
+//   transform: (document, returnedObject) => {
+//     returnedObject.id = returnedObject._id.toString();
+//     delete returnedObject._id;
+//     delete returnedObject.__v;
+//   },
+// });
+
+// const Note = mongoose.model("Note", noteSchema);
 
 let notes = [
   {
@@ -43,24 +61,40 @@ app.get("/", (request, response) => {
 });
 
 app.get("/api/notes", (request, response) => {
-  response.json(notes);
+  Note.find({}).then((notes) => {
+    response.json(notes);
+  });
 });
 
-app.get("/api/notes/:id", (request, response) => {
+app.get("/api/notes/:id", (request, response, next) => {
   const id = request.params.id;
-  const note = notes.find((note) => note.id === id);
-  if (note) {
-    response.json(note);
-  } else {
-    response.statusMessage = "Note not found";
-    response.status(404).end();
-  }
+  Note.findById(id)
+    .then((note) => {
+      if (note) {
+        response.json(note);
+      } else {
+        response.status(404).end();
+      }
+    })
+    .catch((error) => next(error));
+  // const note = notes.find((note) => note.id === id);
+  // if (note) {
+  //   response.json(note);
+  // } else {
+  //   response.statusMessage = "Note not found";
+  //   response.status(404).end();
+  // }
 });
 
-app.delete("/api/notes/:id", (request, response) => {
+app.delete("/api/notes/:id", (request, response, next) => {
   const id = request.params.id;
-  notes = notes.filter((notes) => notes.id !== id);
-  response.status(204).end();
+  Note.findByIdAndDelete(id)
+    .then((result) => {
+      response.status(204).end();
+    })
+    .catch((error) => next(error));
+  // notes = notes.filter((notes) => notes.id !== id);
+  // response.status(204).end();
 });
 
 const generateId = () => {
@@ -70,9 +104,8 @@ const generateId = () => {
   return String(maxId + 1);
 };
 
-app.post("/api/notes", (request, response) => {
+app.post("/api/notes", (request, response, next) => {
   const body = request.body;
-  console.log(body);
 
   // Return is very crucial here, as otherwise application continues to end and note saves
   if (!body.content) {
@@ -81,18 +114,59 @@ app.post("/api/notes", (request, response) => {
     });
   }
 
-  const note = {
+  const note = new Note({
     content: body.content,
     impotant: body.important || false,
-    id: generateId(),
-  };
+    // id: generateId(),
+  });
 
-  notes = notes.concat(note);
-  response.json(note);
+  // notes = notes.concat(note);
+  note
+    .save()
+    .then((savedNote) => {
+      response.json(savedNote);
+    })
+    .catch((error) => next(error));
+  // response.json(note);
 });
 
+app.put("/api/notes/:id", (request, response, next) => {
+  const { content, important } = request.body;
+
+  Note.findById(request.params.id)
+    .then((note) => {
+      if (!note) {
+        return response.status(404).end();
+      }
+
+      note.content = content;
+      note.important = important;
+
+      return note.save().then((updatedNote) => {
+        response.json(updatedNote);
+      });
+    })
+    .catch((error) => next(error));
+});
+
+const unknownEndpoint = (request, response) => {
+  response.status(404).send({ error: "unknown endpoint" });
+};
+
 app.use(unknownEndpoint);
-const PORT = process.env.PORT || 3001;
+
+const errorHandler = (error, request, response, next) => {
+  console.error(error.message);
+  if (error.name === "CastError") {
+    return response.status(400).send({ error: "malformatted id" });
+  } else if (error.name === "ValidationError") {
+    return response.status(400).json({ error: error.message });
+  }
+  next(error);
+};
+app.use(errorHandler);
+
+const PORT = process.env.PORT;
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
